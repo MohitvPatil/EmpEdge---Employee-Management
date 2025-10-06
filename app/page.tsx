@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Search, Plus, CreditCard as Edit, Trash2, User } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -48,47 +48,50 @@ interface FormErrors {
 }
 
 export default function EmployeeDashboard() {
-  // Sample data - will be replaced with SQLite data later
-  const [employees, setEmployees] = useState<Employee[]>([
-    { id: '1', name: 'John Doe', email: 'john.doe@company.com', position: 'Software Engineer', contact: '+1 (555) 123-4567' },
-    { id: '2', name: 'Jane Smith', email: 'jane.smith@company.com', position: 'Product Manager', contact: '+1 (555) 234-5678' },
-    { id: '3', name: 'Mike Johnson', email: 'mike.johnson@company.com', position: 'UX Designer', contact: '+1 (555) 345-6789' },
-    { id: '4', name: 'Sarah Wilson', email: 'sarah.wilson@company.com', position: 'Data Analyst', contact: '+1 (555) 456-7890' },
-    { id: '5', name: 'Tom Brown', email: 'tom.brown@company.com', position: 'DevOps Engineer', contact: '+1 (555) 567-8901' },
-  ]);
-
-  const [searchTerm, setSearchTerm] = useState('');
+  // State
+  const [employees, setEmployees] = useState<Employee[]>([]); // line ~14
+  const [searchTerm, setSearchTerm] = useState('');           // line ~15
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
   const [editingEmployee, setEditingEmployee] = useState<Employee | null>(null);
   const [employeeToDelete, setEmployeeToDelete] = useState<Employee | null>(null);
-  const [formData, setFormData] = useState<FormData>({ name: '', email: '', position: '' , contact: '' });
+  const [formData, setFormData] = useState<FormData>({ name: '', email: '', position: '', contact: '' });
   const [formErrors, setFormErrors] = useState<FormErrors>({});
 
+  // Fetch employees from backend
+  useEffect(() => {
+    const fetchEmployees = async () => {
+      try {
+        const res = await fetch('/api/employees');
+        const data = await res.json();
+        setEmployees(data);
+      } catch (error) {
+        console.error('Failed to fetch employees:', error);
+      }
+    };
+    fetchEmployees();
+  }, []);
+
   // Filter employees based on search term
-  const filteredEmployees = employees.filter(employee =>
-    employee.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    employee.position.toLowerCase().includes(searchTerm.toLowerCase())
-  );
+
+  const filteredEmployees = Array.isArray(employees)
+  ? employees.filter(employee =>
+      employee.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      employee.position.toLowerCase().includes(searchTerm.toLowerCase())
+    )
+  : [];
 
   // Validation function
   const validateForm = (data: FormData): FormErrors => {
     const errors: FormErrors = {};
     
-    if (!data.name.trim()) {
-      errors.name = 'Name is required';
-    }
-    
+    if (!data.name.trim()) errors.name = 'Name is required';
     if (!data.email.trim()) {
       errors.email = 'Email is required';
     } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(data.email)) {
       errors.email = 'Please enter a valid email address';
     }
-    
-    if (!data.position.trim()) {
-      errors.position = 'Position is required';
-    }
-    
+    if (!data.position.trim()) errors.position = 'Position is required';
     if (!data.contact.trim()) {
       errors.contact = 'Contact is required';
     } else if (!/^\d{10}$/.test(data.contact.replace(/[\s\-\(\)]/g, ''))) {
@@ -102,27 +105,38 @@ export default function EmployeeDashboard() {
   const handleSubmit = () => {
     const errors = validateForm(formData);
     setFormErrors(errors);
-    
+
     if (Object.keys(errors).length === 0) {
       if (editingEmployee) {
         // Update existing employee
-        setEmployees(prev =>
-          prev.map(emp =>
-            emp.id === editingEmployee.id
-              ? { ...emp, ...formData }
-              : emp
-          )
-        );
+        fetch(`/api/employees/${editingEmployee.id}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(formData),
+        })
+          .then(res => res.json())
+          .then(() => {
+            setEmployees(prev =>
+              prev.map(emp => (emp.id === editingEmployee.id ? { ...emp, ...formData } : emp))
+            );
+            handleCloseModal();
+          })
+          .catch(err => console.error(err));
       } else {
         // Add new employee
-        const newEmployee: Employee = {
-          id: Date.now().toString(),
-          ...formData,
-        };
-        setEmployees(prev => [...prev, newEmployee]);
+        fetch('/api/employees', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(formData),
+        })
+          .then(res => res.json())
+          .then(data => {
+            const newEmployee: Employee = { id: data.id.toString(), ...formData };
+            setEmployees(prev => [...prev, newEmployee]);
+            handleCloseModal();
+          })
+          .catch(err => console.error(err));
       }
-      
-      handleCloseModal();
     }
   };
 
@@ -164,19 +178,21 @@ export default function EmployeeDashboard() {
   // Handle actual deletion
   const handleDeleteConfirm = () => {
     if (employeeToDelete) {
-      setEmployees(prev => prev.filter(emp => emp.id !== employeeToDelete.id));
-      setIsDeleteDialogOpen(false);
-      setEmployeeToDelete(null);
+      fetch(`/api/employees/${employeeToDelete.id}`, { method: 'DELETE' })
+        .then(res => res.json())
+        .then(() => {
+          setEmployees(prev => prev.filter(emp => emp.id !== employeeToDelete.id));
+          setIsDeleteDialogOpen(false);
+          setEmployeeToDelete(null);
+        })
+        .catch(err => console.error(err));
     }
   };
 
   // Handle form input changes
   const handleInputChange = (field: keyof FormData, value: string) => {
     setFormData(prev => ({ ...prev, [field]: value }));
-    // Clear error when user starts typing
-    if (formErrors[field]) {
-      setFormErrors(prev => ({ ...prev, [field]: undefined }));
-    }
+    if (formErrors[field]) setFormErrors(prev => ({ ...prev, [field]: undefined }));
   };
 
   return (
